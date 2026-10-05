@@ -48,8 +48,15 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#f0f4f0;color:#1a1a1a;mi
 .cm-nota.bad{background:#e53935}
 .cm-text{font-size:.85em;color:#444;line-height:1.5}
 .cm-label{font-size:.75em;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.5px;margin-top:8px}
-.filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-.filters select{padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:.85em;color:#333;background:#fff}
+.filters{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.filters select,.filters input{padding:6px 10px;border:1px solid #ddd;border-radius:6px;font-size:.85em;color:#333;background:#fff}
+.filters input[type="date"]{color:#555}
+.filters label{font-size:.82em;color:#666;white-space:nowrap}
+.filter-period{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.btn-clear{padding:5px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;font-size:.82em;color:#666;cursor:pointer}
+.btn-clear:hover{background:#e8f5e9;color:#2e7d32;border-color:#a5d6a7}
+.period-bar{background:#e8f5e9;border-radius:8px;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.period-bar span{font-size:.83em;color:#2e7d32;font-weight:500}
 .nodata{text-align:center;color:#aaa;padding:30px;font-size:.9em}
 #sec-rank,#sec-comments{display:none}
 .err{background:#fff3f3;border:1px solid #ffcdd2;border-radius:8px;padding:16px;color:#c62828;font-size:.9em}
@@ -66,6 +73,23 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#f0f4f0;color:#1a1a1a;mi
 </div>
 <div class="content">
   <div id="loading"><div class="spinner"></div>Buscando avaliações...</div>
+
+  <!-- Filtro de período global -->
+  <div id="period-filters" style="display:none;margin-bottom:4px">
+    <div class="filters">
+      <div class="filter-period">
+        <label>De:</label>
+        <input type="date" id="fd1" onchange="applyPeriod()">
+        <label>Até:</label>
+        <input type="date" id="fd2" onchange="applyPeriod()">
+        <button class="btn-clear" onclick="clearPeriod()">Limpar filtro</button>
+      </div>
+    </div>
+    <div id="period-info" style="display:none" class="period-bar">
+      <span id="period-text"></span>
+    </div>
+  </div>
+
   <div id="sec-rank">
     <div class="cards" id="cards"></div>
     <div class="chart-box"><h3>Nota Média por Apoio</h3><div class="chart-h"><canvas id="chart"></canvas></div></div>
@@ -81,7 +105,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#f0f4f0;color:#1a1a1a;mi
 
 <script>
 const SHEET_ID = '1PafyffakYHc0BTmmu-RPM4nYtNr6MzkJ4iEJ5Eg3KIU';
-let all = [], barChart;
+let all = [], filtered = [], barChart;
 
 function switchTab(t, el) {
   document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
@@ -167,6 +191,60 @@ function populateFilters() {
   units.forEach(u  => { const o=document.createElement('option');o.value=u;o.textContent=u;fu.appendChild(o); });
 }
 
+function parseTs(v) {
+  if (!v) return null;
+  // gviz returns dates as "Date(yyyy,m,d,h,min,s)" or formatted string
+  const m = String(v).match(/Date\((\d+),(\d+),(\d+)/);
+  if (m) return new Date(+m[1], +m[2], +m[3]);
+  const d = new Date(v);
+  return isNaN(d) ? null : d;
+}
+
+function applyPeriod() {
+  const d1 = document.getElementById('fd1').value;
+  const d2 = document.getElementById('fd2').value;
+  const from = d1 ? new Date(d1) : null;
+  const to   = d2 ? new Date(d2 + 'T23:59:59') : null;
+
+  filtered = all.filter(r => {
+    if (!from && !to) return true;
+    const ts = parseTs(r['Timestamp']);
+    if (!ts) return true;
+    if (from && ts < from) return false;
+    if (to   && ts > to)   return false;
+    return true;
+  });
+
+  const info = document.getElementById('period-info');
+  const txt  = document.getElementById('period-text');
+  if (from || to) {
+    const f = from ? from.toLocaleDateString('pt-BR') : '...';
+    const t = to   ? to.toLocaleDateString('pt-BR')   : '...';
+    txt.textContent = `Período: ${f} → ${t} · ${filtered.length} avaliação${filtered.length!==1?'ões':''}`;
+    info.style.display = 'flex';
+  } else {
+    info.style.display = 'none';
+  }
+
+  refreshAll();
+}
+
+function clearPeriod() {
+  document.getElementById('fd1').value = '';
+  document.getElementById('fd2').value = '';
+  filtered = [...all];
+  document.getElementById('period-info').style.display = 'none';
+  refreshAll();
+}
+
+function refreshAll() {
+  const apoios = aggregate(filtered);
+  const med = filtered.length ? (filtered.reduce((s,r)=>s+(parseFloat(r['Nota'])||0),0)/filtered.length).toFixed(1) : '—';
+  document.getElementById('sub').textContent = `NutriSaúde · ${filtered.length} avaliações · Média geral ${med}`;
+  renderRanking(apoios);
+  renderComments();
+}
+
 function goComments(name) {
   const tabs = document.querySelectorAll('.tab');
   tabs.forEach((t,i) => t.classList.toggle('active', i===1));
@@ -179,7 +257,8 @@ function renderComments() {
   const af = document.getElementById('fa').value;
   const uf = document.getElementById('fu').value;
   const cols = ['Como Avalia','Sugestões','Observações'];
-  const rows = all.filter(r =>
+  const src = filtered.length ? filtered : all;
+  const rows = src.filter(r =>
     (!af || r['Apoio']===af) &&
     (!uf || r['Unidade']===uf) &&
     cols.some(c => r[c])
@@ -209,10 +288,12 @@ async function init() {
   try {
     const rows = await fetchSheet('Avaliações');
     all = rows.filter(r => r['Apoio']);
+    filtered = [...all];
     const apoios = aggregate(all);
     const med = all.length ? (all.reduce((s,r)=>s+(parseFloat(r['Nota'])||0),0)/all.length).toFixed(1) : '—';
     document.getElementById('sub').textContent = `NutriSaúde · ${all.length} avaliações · Média geral ${med}`;
     document.getElementById('loading').style.display = 'none';
+    document.getElementById('period-filters').style.display = 'block';
     document.getElementById('sec-rank').style.display = 'block';
     renderRanking(apoios);
     populateFilters();
