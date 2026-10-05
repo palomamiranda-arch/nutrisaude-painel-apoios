@@ -203,7 +203,7 @@ function parseTs(v) {
 function applyPeriod() {
   const d1 = document.getElementById('fd1').value;
   const d2 = document.getElementById('fd2').value;
-  const from = d1 ? new Date(d1) : null;
+  const from = d1 ? new Date(d1 + 'T00:00:00') : null;
   const to   = d2 ? new Date(d2 + 'T23:59:59') : null;
 
   filtered = all.filter(r => {
